@@ -1,13 +1,10 @@
-name: screenshot
+name: Screenshot with Puppeteer
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: Target URL
-        required: true
-      request_id:
-        description: Request ID
+        description: '캡처할 URL (네이버 블로그 모바일)'
         required: true
 
 jobs:
@@ -15,33 +12,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 18
 
       - name: Install dependencies
         run: npm install puppeteer
 
-      - name: Debug inputs
-        run: |
-          echo "URL = '${{ inputs.url }}'"
-          echo "REQUEST_ID = '${{ inputs.request_id }}'"
-
-      - name: Run screenshot
+      - name: Take screenshot
         env:
-          TARGET_URL: ${{ inputs.url }}
+          TARGET_URL: ${{ github.event.inputs.url }}
         run: node screenshot.js
 
-      - name: Zip screenshot
-        run: zip screenshot.zip screenshot.png
-
-      - name: Upload artifact
+      - name: Upload screenshot
         uses: actions/upload-artifact@v4
         with:
-          name: screenshot-${{ inputs.request_id }}
-          path: screenshot.zip
-          retention-days: 1
+          name: screenshot
+          path: screenshot.png
