@@ -1,0 +1,34 @@
+name: Screenshot with Puppeteer
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Page URL to screenshot"
+        required: true
+
+jobs:
+  screenshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install puppeteer
+
+      - name: Take screenshot
+        run: node screenshot.js
+        env:
+          TARGET_URL: ${{ github.event.inputs.url }}
+
+      - name: Upload screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot
+          path: screenshot.png
