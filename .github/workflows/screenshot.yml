@@ -32,3 +32,4 @@ jobs:
         with:
           name: screenshot
           path: screenshot.png
+          retention-days: 1
