@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Page URL to screenshot"
+        required: true
+      request_id:
         required: true
 
 jobs:
@@ -12,24 +13,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Install dependencies
         run: npm install puppeteer
 
-      - name: Take screenshot
-        run: node screenshot.js
+      - name: Run screenshot
         env:
-          TARGET_URL: ${{ github.event.inputs.url }}
+          TARGET_URL: ${{ inputs.url }}
+        run: node screenshot.js
 
-      - name: Upload screenshot
+      - name: Zip screenshot
+        run: zip screenshot.zip screenshot.png
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: screenshot
-          path: screenshot.png
+          name: screenshot-${{ inputs.request_id }}
+          path: screenshot.zip
           retention-days: 1
