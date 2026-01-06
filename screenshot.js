@@ -21,11 +21,12 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   const page = await browser.newPage();
 
-  await page.setViewport({
-    width: 1280,
-    height: 800,
-    deviceScaleFactor: 1,
-  });
+await page.setViewport({
+  width: 400,
+  height: 800,
+  deviceScaleFactor: 3, // 글자/이미지 선명도 ↑
+});
+
 
   await page.goto(url, {
     waitUntil: 'networkidle0',
