@@ -40,11 +40,12 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   // ✅ 불필요한 UI/광고 제거 (레이아웃 영향 최소)
   await page.evaluate(() => {
     const selectorsToRemove = [
-      '.interact_section__y00DX',
-      '.comment_area__nxrQe',
-      '.splugin_area__Ajs0X',
-      '#ad-bottom-portal',
-      '[id^="ad-content"]',
+      '.Ngnb',                    // ✅ 상단 헤더 (블로그/카테고리/검색)
+      '.interact_section__y00DX', // 공감
+      '.comment_area__nxrQe',     // 댓글
+      '.splugin_area__Ajs0X',     // 스크랩/공유
+      '#ad-bottom-portal',        // 하단 광고
+      '[id^="ad-content"]',       // 중간 광고
     ];
 
     selectorsToRemove.forEach(selector => {
