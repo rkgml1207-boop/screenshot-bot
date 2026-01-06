@@ -1,11 +1,13 @@
-name: Screenshot with Puppeteer
+name: screenshot
 
 on:
   workflow_dispatch:
     inputs:
       url:
+        description: Target URL
         required: true
       request_id:
+        description: Request ID
         required: true
 
 jobs:
@@ -23,6 +25,11 @@ jobs:
 
       - name: Install dependencies
         run: npm install puppeteer
+
+      - name: Debug inputs
+        run: |
+          echo "URL = '${{ inputs.url }}'"
+          echo "REQUEST_ID = '${{ inputs.request_id }}'"
 
       - name: Run screenshot
         env:
