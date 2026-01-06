@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: '캡처할 URL (네이버 블로그 모바일)'
+        description: "Page URL to screenshot"
         required: true
 
 jobs:
@@ -12,8 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,12 +23,13 @@ jobs:
         run: npm install puppeteer
 
       - name: Take screenshot
+        run: node screenshot.js
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
-        run: node screenshot.js
 
       - name: Upload screenshot
         uses: actions/upload-artifact@v4
         with:
           name: screenshot
           path: screenshot.png
+          retention-days: 1
