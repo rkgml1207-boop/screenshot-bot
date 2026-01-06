@@ -6,6 +6,9 @@ on:
       url:
         description: "Page URL to screenshot"
         required: true
+      request_id:
+        description: "Unique request id from n8n"
+        required: true
 
 jobs:
   screenshot:
@@ -23,13 +26,14 @@ jobs:
         run: npm install puppeteer
 
       - name: Take screenshot
-        run: node screenshot.js
         env:
           TARGET_URL: ${{ github.event.inputs.url }}
+          REQUEST_ID: ${{ github.event.inputs.request_id }}
+        run: node screenshot.js
 
       - name: Upload screenshot
         uses: actions/upload-artifact@v4
         with:
-          name: screenshot
+          name: screenshot-${{ github.event.inputs.request_id }}
           path: screenshot.png
           retention-days: 1
