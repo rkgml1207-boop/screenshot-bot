@@ -4,16 +4,18 @@ const puppeteer = require('puppeteer');
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 (async () => {
-  const url = process.env.TARGET_URL;
+  const rawUrl = process.env.TARGET_URL;
   const requestId = process.env.REQUEST_ID;
 
-  if (!url) {
-    throw new Error('TARGET_URL 환경변수가 필요합니다');
+  if (!rawUrl) {
+    throw new Error('❌ TARGET_URL 환경변수가 필요합니다');
+  }
+  if (!requestId) {
+    throw new Error('❌ REQUEST_ID 환경변수가 필요합니다');
   }
 
-  if (!requestId) {
-    throw new Error('REQUEST_ID 환경변수가 필요합니다 (n8n에서 request_id를 넘겨야 합니다)');
-  }
+  // ✅ n8n/GitHub에서 앞에 붙는 "=" 제거
+  const url = rawUrl.replace(/^=/, '');
 
   console.log('▶ REQUEST_ID:', requestId);
   console.log('▶ URL:', url);
@@ -29,6 +31,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   const page = await browser.newPage();
 
+  // ✅ 가로폭 400px 고정
   await page.setViewport({
     width: 400,
     height: 800,
@@ -37,25 +40,26 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   await page.goto(url, { waitUntil: 'networkidle0' });
 
-  // 웹폰트 로딩 대기
+  // 웹폰트 대기
   await page.evaluateHandle('document.fonts.ready');
   await sleep(500);
 
-  // 불필요한 UI 제거
+  // ✅ 공감 / 댓글 / 스크랩 / 광고 / 헤더 제거
   await page.evaluate(() => {
     const selectorsToRemove = [
-      '.Ngnb',                    // 상단 헤더
       '.interact_section__y00DX', // 공감
       '.comment_area__nxrQe',     // 댓글
-      '.splugin_area__Ajs0X',     // 스크랩/공유
-      '#ad-bottom-portal',        // 하단 광고
-      '[id^="ad-content"]',       // 중간 광고
+      '.splugin_area__Ajs0X',     // 공유/스크랩
+      '.Ngnb',                   // 상단 헤더
+      '#ad-bottom-portal',
+      '[id^="ad-content"]',
     ];
 
     selectorsToRemove.forEach(selector => {
       document.querySelectorAll(selector).forEach(el => el.remove());
     });
 
+    // 애니메이션 완전 제거
     document.querySelectorAll('*').forEach(el => {
       el.style.animation = 'none';
       el.style.transition = 'none';
@@ -64,17 +68,18 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   await sleep(300);
 
-  // 본문 컨테이너 캡처
+  // ✅ 본문 컨테이너만 캡처
   const content = await page.$('.se-main-container');
   if (!content) {
     throw new Error('❌ se-main-container를 찾을 수 없습니다');
   }
 
-  await content.screenshot({
-    path: 'screenshot.png',
-  });
+  // ✅ request_id 기반 파일명 (동시 요청 절대 안 엉킴)
+  const fileName = `screenshot_${requestId}.png`;
+
+  await content.screenshot({ path: fileName });
 
   await browser.close();
 
-  console.log('✅ Screenshot saved: screenshot.png');
+  console.log(`✅ Screenshot saved: ${fileName}`);
 })();
