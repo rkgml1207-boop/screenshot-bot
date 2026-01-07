@@ -3,6 +3,8 @@ const puppeteer = require('puppeteer');
 // sleep 함수
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+const MAX_TOTAL_WAIT = 30_000; // 🔥 전체 최대 30초
+
 (async () => {
   const rawUrl = process.env.TARGET_URL;
   const requestId = process.env.REQUEST_ID;
@@ -14,7 +16,6 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     throw new Error('❌ REQUEST_ID 환경변수가 필요합니다');
   }
 
-  // n8n/GitHub에서 앞에 붙는 "=" 제거
   const url = rawUrl.replace(/^=/, '');
 
   console.log('▶ REQUEST_ID:', requestId);
@@ -31,56 +32,83 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   const page = await browser.newPage();
 
-  // 가로폭 400px 고정
   await page.setViewport({
     width: 400,
     height: 800,
     deviceScaleFactor: 3,
   });
 
-  // 1️⃣ 페이지 진입
-  await page.goto(url, { waitUntil: 'networkidle0' });
-
-  // 2️⃣ 웹폰트 대기
-  await page.evaluateHandle('document.fonts.ready');
-
-  // 3️⃣ lazy-load 트리거 (스크롤)
-  await page.evaluate(async () => {
-    await new Promise(resolve => {
-      let totalHeight = 0;
-      const distance = 300;
-      const timer = setInterval(() => {
-        window.scrollBy(0, distance);
-        totalHeight += distance;
-
-        if (totalHeight >= document.body.scrollHeight) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 200);
-    });
+  // 1️⃣ 페이지 진입 (최대 30초)
+  await page.goto(url, {
+    waitUntil: 'networkidle0',
+    timeout: 30_000,
   });
 
-  // 4️⃣ 이미지 로딩 완료 대기 (핵심)
-  await page.evaluate(async () => {
-    const imgs = Array.from(document.images);
+  // 2️⃣ 웹폰트 (최대 2초)
+  await Promise.race([
+    page.evaluateHandle('document.fonts.ready'),
+    sleep(2000),
+  ]);
 
-    await Promise.all(
-      imgs.map(img => {
-        if (img.complete && img.naturalWidth !== 0) {
-          return;
-        }
+  // 🔥 3~4단계를 하나로 묶어서 "최대 30초" 제한
+  await Promise.race([
+    (async () => {
+      // 3️⃣ lazy-load 스크롤 (최대 6초)
+      await page.evaluate(async () => {
+        const start = Date.now();
+        const MAX_SCROLL_TIME = 6000;
 
-        return new Promise(resolve => {
-          img.addEventListener('load', resolve, { once: true });
-          img.addEventListener('error', resolve, { once: true });
+        await new Promise(resolve => {
+          let totalHeight = 0;
+          const distance = 300;
+          const timer = setInterval(() => {
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+
+            if (
+              totalHeight >= document.body.scrollHeight ||
+              Date.now() - start > MAX_SCROLL_TIME
+            ) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 200);
         });
-      })
-    );
-  });
+      });
 
-  // 5️⃣ 안정화 딜레이
-  await sleep(800);
+      // 4️⃣ 이미지 로딩 대기 (최대 5초)
+      await page.evaluate(async () => {
+        const MAX_IMAGE_WAIT = 5000;
+        const start = Date.now();
+        const imgs = Array.from(document.images);
+
+        await Promise.all(
+          imgs.map(img => {
+            if (img.complete) return;
+
+            return new Promise(resolve => {
+              const timer = setInterval(() => {
+                if (
+                  img.complete ||
+                  Date.now() - start > MAX_IMAGE_WAIT
+                ) {
+                  clearInterval(timer);
+                  resolve();
+                }
+              }, 100);
+
+              img.addEventListener('load', resolve, { once: true });
+              img.addEventListener('error', resolve, { once: true });
+            });
+          })
+        );
+      });
+    })(),
+    sleep(MAX_TOTAL_WAIT), // 🔥 30초 지나면 강제 종료
+  ]);
+
+  // 5️⃣ 안정화 딜레이 (짧게)
+  await sleep(500);
 
   // 6️⃣ 불필요 UI 제거
   await page.evaluate(() => {
@@ -102,8 +130,6 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
       el.style.transition = 'none';
     });
   });
-
-  await sleep(300);
 
   // 7️⃣ 본문 캡처
   const content = await page.$('.se-main-container');
