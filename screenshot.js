@@ -1,145 +1,134 @@
 const puppeteer = require('puppeteer');
 
-// sleep 함수
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const MAX_TOTAL_WAIT = 30_000; // 🔥 전체 최대 30초
+const MAX_TOTAL_TIME = 90_000;   // ⏱️ 전체 1.5분
+const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
 
 (async () => {
+  const startTime = Date.now();
+
   const rawUrl = process.env.TARGET_URL;
   const requestId = process.env.REQUEST_ID;
-
-  if (!rawUrl) {
-    throw new Error('❌ TARGET_URL 환경변수가 필요합니다');
-  }
-  if (!requestId) {
-    throw new Error('❌ REQUEST_ID 환경변수가 필요합니다');
-  }
+  if (!rawUrl || !requestId) throw new Error('env missing');
 
   const url = rawUrl.replace(/^=/, '');
 
-  console.log('▶ REQUEST_ID:', requestId);
-  console.log('▶ URL:', url);
-
   const browser = await puppeteer.launch({
     headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-gpu',
-    ],
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 
   const page = await browser.newPage();
+  await page.setViewport({ width: 400, height: 800, deviceScaleFactor: 3 });
 
-  await page.setViewport({
-    width: 400,
-    height: 800,
-    deviceScaleFactor: 3,
-  });
+  // 페이지 진입 (최대 30초)
+  await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 });
 
-  // 1️⃣ 페이지 진입 (최대 30초)
-  await page.goto(url, {
-    waitUntil: 'networkidle0',
-    timeout: 30_000,
-  });
-
-  // 2️⃣ 웹폰트 (최대 2초)
+  // 폰트 (최대 2초)
   await Promise.race([
     page.evaluateHandle('document.fonts.ready'),
     sleep(2000),
   ]);
 
-  // 🔥 3~4단계를 하나로 묶어서 "최대 30초" 제한
+  // 🔥 로딩 전체를 40초로 제한
   await Promise.race([
     (async () => {
-      // 3️⃣ lazy-load 스크롤 (최대 6초)
+      /* 1️⃣ 스크롤 (lazy-load 트리거) */
       await page.evaluate(async () => {
         const start = Date.now();
-        const MAX_SCROLL_TIME = 6000;
+        const MAX_SCROLL = 15_000;
 
         await new Promise(resolve => {
-          let totalHeight = 0;
-          const distance = 300;
+          let y = 0;
           const timer = setInterval(() => {
-            window.scrollBy(0, distance);
-            totalHeight += distance;
+            window.scrollBy(0, 300);
+            y += 300;
 
             if (
-              totalHeight >= document.body.scrollHeight ||
-              Date.now() - start > MAX_SCROLL_TIME
+              y >= document.body.scrollHeight ||
+              Date.now() - start > MAX_SCROLL
             ) {
               clearInterval(timer);
               resolve();
             }
-          }, 200);
+          }, 300);
         });
       });
 
-      // 4️⃣ 이미지 로딩 대기 (최대 5초)
+      /* 2️⃣ 고해상도 이미지 대기 (src 교체 감지) */
       await page.evaluate(async () => {
-        const MAX_IMAGE_WAIT = 5000;
         const start = Date.now();
-        const imgs = Array.from(document.images);
+        const MAX_WAIT = 25_000;
+
+        const imgs = Array.from(
+          document.querySelectorAll('.se-main-container img')
+        );
 
         await Promise.all(
           imgs.map(img => {
-            if (img.complete) return;
+            const initial = img.currentSrc || img.src;
 
             return new Promise(resolve => {
-              const timer = setInterval(() => {
+              const check = () => {
+                const cur = img.currentSrc || img.src;
                 if (
-                  img.complete ||
-                  Date.now() - start > MAX_IMAGE_WAIT
+                  cur &&
+                  cur !== initial &&
+                  !cur.includes('blur') &&
+                  !cur.includes('thumb')
                 ) {
-                  clearInterval(timer);
                   resolve();
                 }
-              }, 100);
+                if (Date.now() - start > MAX_WAIT) resolve();
+              };
 
-              img.addEventListener('load', resolve, { once: true });
-              img.addEventListener('error', resolve, { once: true });
+              const obs = new MutationObserver(check);
+              obs.observe(img, {
+                attributes: true,
+                attributeFilter: ['src', 'srcset'],
+              });
+
+              const timer = setInterval(check, 300);
+              setTimeout(() => {
+                clearInterval(timer);
+                obs.disconnect();
+                resolve();
+              }, MAX_WAIT);
             });
           })
         );
       });
     })(),
-    sleep(MAX_TOTAL_WAIT), // 🔥 30초 지나면 강제 종료
+    sleep(MAX_LOADING_TIME),
   ]);
 
-  // 5️⃣ 안정화 딜레이 (짧게)
-  await sleep(500);
+  // ⏱️ 전체 1.5분 초과 방지
+  const elapsed = Date.now() - startTime;
+  if (elapsed > MAX_TOTAL_TIME) {
+    console.warn('⏱️ total timeout reached, capture anyway');
+  }
 
-  // 6️⃣ 불필요 UI 제거
+  // UI 제거
   await page.evaluate(() => {
-    const selectorsToRemove = [
+    [
       '.interact_section__y00DX',
       '.comment_area__nxrQe',
       '.splugin_area__Ajs0X',
       '.Ngnb',
       '#ad-bottom-portal',
       '[id^="ad-content"]',
-    ];
-
-    selectorsToRemove.forEach(selector => {
-      document.querySelectorAll(selector).forEach(el => el.remove());
-    });
-
-    document.querySelectorAll('*').forEach(el => {
-      el.style.animation = 'none';
-      el.style.transition = 'none';
+    ].forEach(s => {
+      document.querySelectorAll(s).forEach(e => e.remove());
     });
   });
 
-  // 7️⃣ 본문 캡처
   const content = await page.$('.se-main-container');
-  if (!content) {
-    throw new Error('❌ se-main-container를 찾을 수 없습니다');
-  }
+  if (!content) throw new Error('container not found');
 
-  const fileName = `screenshot_${requestId}.png`;
-  await content.screenshot({ path: fileName });
+  await content.screenshot({
+    path: `screenshot_${requestId}.png`,
+  });
 
   await browser.close();
-  console.log(`✅ Screenshot saved: ${fileName}`);
 })();
