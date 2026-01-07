@@ -2,8 +2,41 @@ const puppeteer = require('puppeteer');
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const MAX_TOTAL_TIME = 90_000;   // ⏱️ 전체 1.5분
-const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
+const MAX_LOADING_TIME = 40_000; // 로딩 최대 40초
+const MAX_TOTAL_TIME = 90_000;   // 전체 최대 1.5분
+
+async function isFontBroken(page) {
+  return await page.evaluate(() => {
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT
+    );
+    let checked = 0;
+    while (walker.nextNode() && checked < 50) {
+      const t = walker.currentNode.textContent;
+      if (t && /[\u25A1\u25A0\uFFFD]/.test(t)) return true;
+      checked++;
+    }
+    return false;
+  });
+}
+
+async function injectKoreanFont(page) {
+  await page.addStyleTag({
+    content: `
+      * {
+        font-family:
+          -apple-system,
+          BlinkMacSystemFont,
+          "Apple SD Gothic Neo",
+          "Malgun Gothic",
+          "Noto Sans KR",
+          "Nanum Gothic",
+          Arial, sans-serif !important;
+      }
+    `
+  });
+}
 
 (async () => {
   const startTime = Date.now();
@@ -20,12 +53,19 @@ const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
   });
 
   const page = await browser.newPage();
-  await page.setViewport({ width: 400, height: 800, deviceScaleFactor: 3 });
+  await page.setViewport({
+    width: 400,
+    height: 800,
+    deviceScaleFactor: 3,
+  });
 
-  // 페이지 진입 (최대 30초)
-  await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 });
+  // 페이지 진입
+  await page.goto(url, {
+    waitUntil: 'networkidle0',
+    timeout: 30_000,
+  });
 
-  // 폰트 (최대 2초)
+  // 폰트 기본 대기 (2초)
   await Promise.race([
     page.evaluateHandle('document.fonts.ready'),
     sleep(2000),
@@ -34,17 +74,15 @@ const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
   // 🔥 로딩 전체를 40초로 제한
   await Promise.race([
     (async () => {
-      /* 1️⃣ 스크롤 (lazy-load 트리거) */
+      // lazy-load 스크롤
       await page.evaluate(async () => {
         const start = Date.now();
         const MAX_SCROLL = 15_000;
-
         await new Promise(resolve => {
           let y = 0;
           const timer = setInterval(() => {
             window.scrollBy(0, 300);
             y += 300;
-
             if (
               y >= document.body.scrollHeight ||
               Date.now() - start > MAX_SCROLL
@@ -56,11 +94,10 @@ const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
         });
       });
 
-      /* 2️⃣ 고해상도 이미지 대기 (src 교체 감지) */
+      // 이미지 src 교체 대기 (저해상도 회피)
       await page.evaluate(async () => {
         const start = Date.now();
         const MAX_WAIT = 25_000;
-
         const imgs = Array.from(
           document.querySelectorAll('.se-main-container img')
         );
@@ -68,15 +105,13 @@ const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
         await Promise.all(
           imgs.map(img => {
             const initial = img.currentSrc || img.src;
-
             return new Promise(resolve => {
               const check = () => {
                 const cur = img.currentSrc || img.src;
                 if (
                   cur &&
                   cur !== initial &&
-                  !cur.includes('blur') &&
-                  !cur.includes('thumb')
+                  !/blur|thumb|placeholder|low/i.test(cur)
                 ) {
                   resolve();
                 }
@@ -103,10 +138,14 @@ const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
     sleep(MAX_LOADING_TIME),
   ]);
 
-  // ⏱️ 전체 1.5분 초과 방지
-  const elapsed = Date.now() - startTime;
-  if (elapsed > MAX_TOTAL_TIME) {
-    console.warn('⏱️ total timeout reached, capture anyway');
+  // 본문 selector 확보 (fallback 포함)
+  let content;
+  try {
+    await page.waitForSelector('.se-main-container', { timeout: 10_000 });
+    content = await page.$('.se-main-container');
+  } catch {
+    console.warn('⚠️ se-main-container not found, fallback to body');
+    content = await page.$('body');
   }
 
   // UI 제거
@@ -118,17 +157,28 @@ const MAX_LOADING_TIME = 40_000; // ⏳ 로딩 최대 40초
       '.Ngnb',
       '#ad-bottom-portal',
       '[id^="ad-content"]',
-    ].forEach(s => {
-      document.querySelectorAll(s).forEach(e => e.remove());
-    });
+    ].forEach(s =>
+      document.querySelectorAll(s).forEach(e => e.remove())
+    );
   });
 
-  const content = await page.$('.se-main-container');
-  if (!content) throw new Error('container not found');
+  const filePath = `screenshot_${requestId}.png`;
 
-  await content.screenshot({
-    path: `screenshot_${requestId}.png`,
-  });
+  // 1차 캡처
+  await content.screenshot({ path: filePath });
+
+  // 🔁 폰트 깨짐 시 1회 재시도
+  if (await isFontBroken(page)) {
+    console.warn('⚠️ Font broken detected → retrying once');
+    await injectKoreanFont(page);
+    await sleep(1500);
+    await content.screenshot({ path: filePath });
+  }
+
+  // 전체 시간 초과 방지
+  if (Date.now() - startTime > MAX_TOTAL_TIME) {
+    console.warn('⏱️ Total time exceeded, forced finish');
+  }
 
   await browser.close();
 })();
