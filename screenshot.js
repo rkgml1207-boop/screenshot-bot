@@ -21,8 +21,11 @@ async function isFontBroken(page) {
   });
 }
 
+/**
+ * ✅ 한글 웹폰트 "로드만" 수행
+ * ❌ font-family 강제 지정 절대 없음
+ */
 async function injectKoreanWebFonts(page) {
-  // 1️⃣ 모든 웹폰트 CSS 로드
   const fontCssUrls = [
     'https://hangeul.pstatic.net/hangeul_static/css/nanum-gothic.css',
     'https://hangeul.pstatic.net/hangeul_static/css/maru-buri.css',
@@ -31,11 +34,12 @@ async function injectKoreanWebFonts(page) {
     'https://hangeul.pstatic.net/hangeul_static/css/NanumBaReunHiPi.css',
   ];
 
+  // 1️⃣ 웹폰트 CSS 주입
   for (const url of fontCssUrls) {
     await page.addStyleTag({ url });
   }
 
-  // 2️⃣ font-face 실제 로딩 강제
+  // 2️⃣ 실제 font-face 다운로드 강제
   await page.evaluate(async () => {
     const fonts = [
       // Nanum Gothic
@@ -69,26 +73,32 @@ async function injectKoreanWebFonts(page) {
 
     await document.fonts.ready;
   });
+}
 
-  // 3️⃣ 전체 기본 폰트 스택
+/**
+ * 🔧 네모(□) 깨진 텍스트만 fallback 적용
+ */
+async function fixBrokenFontsOnly(page) {
   await page.addStyleTag({
     content: `
-      * {
-        font-family:
-          "NanumGothic",
-          "MaruBuri",
-          "NanumMyeongjo",
-          "NanumBaReunHiPi",
-          "NanumDaSiSiJagHae",
-          -apple-system,
-          BlinkMacSystemFont,
-          "Apple SD Gothic Neo",
-          "Malgun Gothic",
-          "Noto Sans KR",
-          Arial,
-          sans-serif !important;
+      .__font_fallback__ {
+        font-family: "NanumGothic", sans-serif !important;
       }
     `,
+  });
+
+  await page.evaluate(() => {
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT
+    );
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.textContent && /[\u25A1\u25A0\uFFFD]/.test(node.textContent)) {
+        node.parentElement?.classList.add('__font_fallback__');
+      }
+    }
   });
 }
 
@@ -119,9 +129,9 @@ async function injectKoreanWebFonts(page) {
     timeout: 30_000,
   });
 
-  // ✅ 모든 한글 웹폰트 강제 주입
+  // ✅ 웹폰트 로드 (디자인 유지)
   await injectKoreanWebFonts(page);
-  await sleep(600);
+  await sleep(500);
 
   // 기존 폰트 대기 로직 유지
   await Promise.race([
@@ -224,11 +234,11 @@ async function injectKoreanWebFonts(page) {
   // 1차 캡처
   await content.screenshot({ path: filePath });
 
-  // 폰트 깨짐 시 1회 재시도
+  // 🔁 네모 깨짐 있을 때만 fallback 적용 후 재캡처
   if (await isFontBroken(page)) {
-    console.warn('⚠️ Font broken detected → retrying once');
-    await injectKoreanWebFonts(page);
-    await sleep(1500);
+    console.warn('⚠️ Font broken detected → applying fallback');
+    await fixBrokenFontsOnly(page);
+    await sleep(1000);
     await content.screenshot({ path: filePath });
   }
 
