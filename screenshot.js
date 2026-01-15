@@ -2,8 +2,8 @@ const puppeteer = require('puppeteer');
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const MAX_LOADING_TIME = 40_000; // 로딩 최대 40초
-const MAX_TOTAL_TIME = 90_000;   // 전체 최대 1.5분
+const MAX_LOADING_TIME = 40_000;
+const MAX_TOTAL_TIME = 90_000;
 
 async function isFontBroken(page) {
   return await page.evaluate(() => {
@@ -21,19 +21,44 @@ async function isFontBroken(page) {
   });
 }
 
-async function injectNanumGothic(page) {
-  // 나눔고딕 웹폰트 CSS 로드
-  await page.addStyleTag({
-    url: 'https://hangeul.pstatic.net/hangeul_static/css/nanum-gothic.css',
-  });
+async function injectKoreanWebFonts(page) {
+  // 1️⃣ 모든 웹폰트 CSS 로드
+  const fontCssUrls = [
+    'https://hangeul.pstatic.net/hangeul_static/css/nanum-gothic.css',
+    'https://hangeul.pstatic.net/hangeul_static/css/maru-buri.css',
+    'https://hangeul.pstatic.net/hangeul_static/css/nanum-myeongjo.css',
+    'https://hangeul.pstatic.net/hangeul_static/css/NanumDaSiSiJagHae.css',
+    'https://hangeul.pstatic.net/hangeul_static/css/NanumBaReunHiPi.css',
+  ];
 
-  // font-face 실제 로딩 강제
+  for (const url of fontCssUrls) {
+    await page.addStyleTag({ url });
+  }
+
+  // 2️⃣ font-face 실제 로딩 강제
   await page.evaluate(async () => {
     const fonts = [
+      // Nanum Gothic
       'NanumGothic',
       'NanumGothicBold',
       'NanumGothicExtraBold',
       'NanumGothicLight',
+
+      // MaruBuri
+      'MaruBuriExtraLight',
+      'MaruBuriLight',
+      'MaruBuri',
+      'MaruBuriSemiBold',
+      'MaruBuriBold',
+
+      // Nanum Myeongjo
+      'NanumMyeongjo',
+      'NanumMyeongjoBold',
+      'NanumMyeongjoExtraBold',
+
+      // Etc
+      'NanumDaSiSiJagHae',
+      'NanumBaReunHiPi',
     ];
 
     await Promise.all(
@@ -45,13 +70,16 @@ async function injectNanumGothic(page) {
     await document.fonts.ready;
   });
 
-  // 전체 강제 적용
+  // 3️⃣ 전체 기본 폰트 스택
   await page.addStyleTag({
     content: `
       * {
         font-family:
           "NanumGothic",
-          "NanumGothicBold",
+          "MaruBuri",
+          "NanumMyeongjo",
+          "NanumBaReunHiPi",
+          "NanumDaSiSiJagHae",
           -apple-system,
           BlinkMacSystemFont,
           "Apple SD Gothic Neo",
@@ -91,17 +119,17 @@ async function injectNanumGothic(page) {
     timeout: 30_000,
   });
 
-  // ✅ 나눔고딕 웹폰트 강제 주입 (핵심)
-  await injectNanumGothic(page);
-  await sleep(500);
+  // ✅ 모든 한글 웹폰트 강제 주입
+  await injectKoreanWebFonts(page);
+  await sleep(600);
 
-  // 폰트 기본 대기 (기존 로직 유지)
+  // 기존 폰트 대기 로직 유지
   await Promise.race([
     page.evaluateHandle('document.fonts.ready'),
     sleep(2000),
   ]);
 
-  // 🔥 로딩 전체를 40초로 제한
+  // 🔥 로딩 전체 제한
   await Promise.race([
     (async () => {
       // lazy-load 스크롤
@@ -124,7 +152,7 @@ async function injectNanumGothic(page) {
         });
       });
 
-      // 이미지 src 교체 대기 (저해상도 회피)
+      // 이미지 고해상도 대기
       await page.evaluate(async () => {
         const start = Date.now();
         const MAX_WAIT = 25_000;
@@ -168,13 +196,12 @@ async function injectNanumGothic(page) {
     sleep(MAX_LOADING_TIME),
   ]);
 
-  // 본문 selector 확보 (fallback 포함)
+  // 본문 selector
   let content;
   try {
     await page.waitForSelector('.se-main-container', { timeout: 10_000 });
     content = await page.$('.se-main-container');
   } catch {
-    console.warn('⚠️ se-main-container not found, fallback to body');
     content = await page.$('body');
   }
 
@@ -197,17 +224,16 @@ async function injectNanumGothic(page) {
   // 1차 캡처
   await content.screenshot({ path: filePath });
 
-  // 🔁 폰트 깨짐 시 1회 재시도 (기존 로직 유지)
+  // 폰트 깨짐 시 1회 재시도
   if (await isFontBroken(page)) {
     console.warn('⚠️ Font broken detected → retrying once');
-    await injectNanumGothic(page);
+    await injectKoreanWebFonts(page);
     await sleep(1500);
     await content.screenshot({ path: filePath });
   }
 
-  // 전체 시간 초과 방지
   if (Date.now() - startTime > MAX_TOTAL_TIME) {
-    console.warn('⏱️ Total time exceeded, forced finish');
+    console.warn('⏱️ Total time exceeded');
   }
 
   await browser.close();
