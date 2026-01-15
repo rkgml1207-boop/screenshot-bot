@@ -2,9 +2,12 @@ const puppeteer = require('puppeteer');
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const MAX_LOADING_TIME = 40_000; // 로딩 최대 40초
-const MAX_TOTAL_TIME = 90_000;   // 전체 최대 1.5분
+const MAX_LOADING_TIME = 40_000;
+const MAX_TOTAL_TIME = 90_000;
 
+/* ---------------------------------- */
+/* 폰트 깨짐 감지                      */
+/* ---------------------------------- */
 async function isFontBroken(page) {
   return await page.evaluate(() => {
     const walker = document.createTreeWalker(
@@ -12,7 +15,7 @@ async function isFontBroken(page) {
       NodeFilter.SHOW_TEXT
     );
     let checked = 0;
-    while (walker.nextNode() && checked < 50) {
+    while (walker.nextNode() && checked < 80) {
       const t = walker.currentNode.textContent;
       if (t && /[\u25A1\u25A0\uFFFD]/.test(t)) return true;
       checked++;
@@ -21,23 +24,32 @@ async function isFontBroken(page) {
   });
 }
 
-async function injectKoreanFont(page) {
+/* ---------------------------------- */
+/* 네이버 블로그 전용 폰트 주입 (핵심) */
+/* ---------------------------------- */
+async function injectNaverFont(page) {
   await page.addStyleTag({
     content: `
-      * {
-        font-family:
-          -apple-system,
-          BlinkMacSystemFont,
-          "Apple SD Gothic Neo",
-          "Malgun Gothic",
-          "Noto Sans KR",
-          "Nanum Gothic",
-          Arial, sans-serif !important;
+      @font-face {
+        font-family: 'NaverKR';
+        src: url('https://fonts.gstatic.com/s/notosanskr/v27/PbykFmXiEBPT4ITbgNA5CgmOelzI7Xc.woff2')
+             format('woff2');
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+
+      .se-main-container,
+      .se-main-container * {
+        font-family: 'NaverKR', system-ui, -apple-system, BlinkMacSystemFont, Arial, sans-serif !important;
       }
     `
   });
 }
 
+/* ---------------------------------- */
+/* 메인                               */
+/* ---------------------------------- */
 (async () => {
   const startTime = Date.now();
 
@@ -59,25 +71,20 @@ async function injectKoreanFont(page) {
     deviceScaleFactor: 3,
   });
 
-  // 페이지 진입
+  /* ---------- 페이지 진입 ---------- */
   await page.goto(url, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'domcontentloaded', // ⭐ 네이버 전용
     timeout: 30_000,
   });
 
-  // 폰트 기본 대기 (2초)
-  await Promise.race([
-    page.evaluateHandle('document.fonts.ready'),
-    sleep(2000),
-  ]);
-
-  // 🔥 로딩 전체를 40초로 제한
+  /* ---------- lazy-load + 이미지 대기 ---------- */
   await Promise.race([
     (async () => {
-      // lazy-load 스크롤
+      // lazy scroll
       await page.evaluate(async () => {
         const start = Date.now();
         const MAX_SCROLL = 15_000;
+
         await new Promise(resolve => {
           let y = 0;
           const timer = setInterval(() => {
@@ -94,7 +101,7 @@ async function injectKoreanFont(page) {
         });
       });
 
-      // 이미지 src 교체 대기 (저해상도 회피)
+      // 이미지 고해상도 src 대기
       await page.evaluate(async () => {
         const start = Date.now();
         const MAX_WAIT = 25_000;
@@ -112,9 +119,7 @@ async function injectKoreanFont(page) {
                   cur &&
                   cur !== initial &&
                   !/blur|thumb|placeholder|low/i.test(cur)
-                ) {
-                  resolve();
-                }
+                ) resolve();
                 if (Date.now() - start > MAX_WAIT) resolve();
               };
 
@@ -138,7 +143,7 @@ async function injectKoreanFont(page) {
     sleep(MAX_LOADING_TIME),
   ]);
 
-  // 본문 selector 확보 (fallback 포함)
+  /* ---------- 본문 selector ---------- */
   let content;
   try {
     await page.waitForSelector('.se-main-container', { timeout: 10_000 });
@@ -148,7 +153,7 @@ async function injectKoreanFont(page) {
     content = await page.$('body');
   }
 
-  // UI 제거
+  /* ---------- UI 제거 ---------- */
   await page.evaluate(() => {
     [
       '.interact_section__y00DX',
@@ -162,20 +167,30 @@ async function injectKoreanFont(page) {
     );
   });
 
+  /* ---------- ⭐ 폰트 주입 + 대기 ---------- */
+  await injectNaverFont(page);
+
+  await page.evaluate(async () => {
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+  });
+  await sleep(1200);
+
   const filePath = `screenshot_${requestId}.png`;
 
-  // 1차 캡처
+  /* ---------- 1차 캡처 ---------- */
   await content.screenshot({ path: filePath });
 
-  // 🔁 폰트 깨짐 시 1회 재시도
+  /* ---------- 폰트 깨짐 시 1회 재시도 ---------- */
   if (await isFontBroken(page)) {
     console.warn('⚠️ Font broken detected → retrying once');
-    await injectKoreanFont(page);
-    await sleep(1500);
+    await injectNaverFont(page);
+    await page.evaluate(() => document.fonts.ready);
+    await sleep(1200);
     await content.screenshot({ path: filePath });
   }
 
-  // 전체 시간 초과 방지
   if (Date.now() - startTime > MAX_TOTAL_TIME) {
     console.warn('⏱️ Total time exceeded, forced finish');
   }
