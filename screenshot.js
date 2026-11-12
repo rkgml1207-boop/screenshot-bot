@@ -52,44 +52,38 @@ const MAX_LOADING_TIME = 40_000;
       });
 
       // 이미지 고해상도 대기
+      // 네이버는 처음에 흐린 미리보기(type=w80_blur)를 넣고, 화면에 보일 때 진짜 이미지로 바꾼다.
+      // 슬라이드 안에서 옆으로 숨은 장은 스크롤해도 안 바뀌므로 직접 진짜 주소로 바꾼다.
       await page.evaluate(async () => {
-        const start = Date.now();
         const MAX_WAIT = 25_000;
         const imgs = Array.from(
           document.querySelectorAll('.se-main-container img')
         );
 
-        await Promise.all(
-          imgs.map(img => {
-            const initial = img.currentSrc || img.src;
-            return new Promise(resolve => {
-              const check = () => {
-                const cur = img.currentSrc || img.src;
-                if (
-                  cur &&
-                  cur !== initial &&
-                  !/blur|thumb|placeholder|low/i.test(cur)
-                ) {
-                  resolve();
-                }
-                if (Date.now() - start > MAX_WAIT) resolve();
-              };
+        imgs.forEach(img => {
+          img.loading = 'eager';
+          const cur = img.getAttribute('src') || '';
+          if (/type=w\d+_blur/.test(cur)) {
+            img.removeAttribute('srcset');
+            img.src = cur.replace(/type=w\d+_blur/, 'type=w800');
+          }
+        });
 
-              const obs = new MutationObserver(check);
-              obs.observe(img, {
-                attributes: true,
-                attributeFilter: ['src', 'srcset'],
-              });
-
-              const timer = setInterval(check, 300);
-              setTimeout(() => {
-                clearInterval(timer);
-                obs.disconnect();
-                resolve();
-              }, MAX_WAIT);
-            });
-          })
-        );
+        // 모든 이미지가 실제로 다 받아지고 그려질 준비가 될 때까지 기다린다
+        await Promise.race([
+          Promise.all(
+            imgs.map(img =>
+              (img.complete
+                ? Promise.resolve()
+                : new Promise(resolve => {
+                    img.addEventListener('load', resolve, { once: true });
+                    img.addEventListener('error', resolve, { once: true });
+                  })
+              ).then(() => img.decode().catch(() => {}))
+            )
+          ),
+          new Promise(resolve => setTimeout(resolve, MAX_WAIT)),
+        ]);
       });
     })(),
     sleep(MAX_LOADING_TIME),
