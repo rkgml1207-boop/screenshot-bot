@@ -105,17 +105,27 @@ const MAX_LOADING_TIME = 40_000;
   }
 
   // UI 제거
+  // 클래스 뒤 해시(예: __y00DX, --vWRCb)는 네이버 배포 때마다 바뀌므로 일부만 맞춘다
   await page.evaluate(() => {
     [
-      '.interact_section__y00DX',
-      '.comment_area__nxrQe',
-      '.splugin_area__Ajs0X',
+      '[class*="interact_section"]', // 하트·댓글·공유 바 (하단 고정 포함)
+      '[class*="comment_area"]',
+      '[class*="splugin_area"]',
+      '.naver-splugin-dimmed',
       '.Ngnb',
       '#ad-bottom-portal',
       '[id^="ad-content"]',
     ].forEach(s =>
       document.querySelectorAll(s).forEach(e => e.remove())
     );
+
+    // 화면에 떠 있는 고정 요소는 본문 캡처 위에 겹쳐 찍히므로 숨긴다
+    document.querySelectorAll('body *').forEach(e => {
+      const pos = getComputedStyle(e).position;
+      if (pos === 'fixed' || pos === 'sticky') {
+        e.style.setProperty('display', 'none', 'important');
+      }
+    });
   });
 
   await content.screenshot({
